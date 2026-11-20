@@ -166,12 +166,18 @@ def protect_api():
 @app.after_request
 def add_cors_headers(response):
     origin = request.headers.get("Origin", "")
+
     if origin and (not ALLOWED_ORIGINS or origin in ALLOWED_ORIGINS):
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Token"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+
+        if request.headers.get("Access-Control-Request-Private-Network", "").lower() == "true":
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
+
     return response
+
 
 
 @app.route("/api/<path:_path>", methods=["OPTIONS"])
