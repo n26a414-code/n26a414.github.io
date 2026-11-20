@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MP3変換ツール</title>
+<style>
+:root{font-family:system-ui,"Yu Gothic UI",Meiryo,sans-serif;color:#20242b;background:#f2f4f8}
+*{box-sizing:border-box}body{margin:0;padding:24px 14px;display:flex;justify-content:center}
+main{width:min(720px,100%);background:white;border:1px solid #e1e5ec;border-radius:18px;padding:24px;box-shadow:0 10px 32px #17243a12}
+h1{font-size:24px;margin:0 0 6px}.sub,.hint{color:#687386;font-size:13px}.panel{background:#f6f8fb;border:1px solid #e5e9f0;border-radius:12px;padding:14px;margin:16px 0}
+label{display:block;font-weight:650;font-size:14px;margin:14px 0 6px}
+input[type=text],input[type=url],input[type=password]{width:100%;padding:11px;border:1px solid #cbd2dd;border-radius:9px;font:inherit}
+button{border:0;border-radius:9px;background:#2458c6;color:white;padding:11px 16px;font:inherit;font-weight:650;cursor:pointer;margin:6px 4px 0 0}
+button.secondary{background:#e8edf5;color:#25334a}button:disabled{opacity:.5}
+.check{display:flex;gap:9px;align-items:flex-start;font-size:13px;font-weight:400;line-height:1.5}
+#log{white-space:pre-wrap;overflow-wrap:anywhere;background:#111827;color:#d9e4f5;padding:13px;border-radius:10px;min-height:110px;max-height:250px;overflow:auto;font:12px/1.65 Consolas,monospace}
+#dirs button{display:block;width:100%;text-align:left;background:#edf2fa;color:#26364e}
+.status{font-weight:650;margin-top:10px}.good{color:#16834a}.bad{color:#bd3434}
+.small{font-size:12px;color:#6b7482;line-height:1.6}.hidden{display:none}
+</style>
+</head>
+<body><main>
+<h1>MP3変換ツール</h1>
+<p class="sub">GitHub Pagesの画面から、同じWi-Fi内のWindows PCで処理します。</p>
+<div class="panel">
+  <strong>① PCサーバーへの接続設定</strong>
+  <label for="api">PCのアドレス</label>
+  <input id="api" type="text" placeholder="例: http://192.168.0.3:5000">
+  <label for="token">APIトークン</label>
+  <input id="token" type="password" autocomplete="off" placeholder="PCで起動した黒い画面に表示されるトークン">
+  <button id="connect">接続テスト</button>
+  <div id="connection" class="status">未接続</div>
+  <p class="small">同じWi-Fiに接続した状態で使用してください。PC側のPythonサーバーを起動しておく必要があります。</p>
+</div>
+<form id="form">
+  <strong>② 変換設定</strong>
+  <label for="url">YouTube URL</label>
+  <input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=...">
+  <label for="path">PC側の保存先フォルダ</label>
+  <input id="path" type="text" placeholder="例: C:\Users\ユーザー名\Music\MP3">
+  <div class="hint">空欄の場合はPC側の初期保存先（Music\MP3）を使います。</div>
+  <label class="check" style="margin:18px 0">
+    <input id="agree" type="checkbox" required>
+    <span>この音源を保存・変換する権利または許可があることを確認しました。</span>
+  </label>
+  <button id="start" type="submit">変換開始</button>
+</form>
+<div class="panel">
+  <strong>③ 進行状況</strong>
+  <div id="status" class="status">待機中</div>
+  <button id="refresh" class="secondary">状況を更新</button>
+  <button id="download" class="secondary" disabled>Android / PCにMP3をダウンロード</button>
+</div>
+<strong>ログ</strong>
+<div id="log" role="log" aria-live="polite">準備完了。まずPCサーバーへの接続テストをしてください。</div>
+<p class="small">Androidではダウンロード後、ブラウザのダウンロード通知や「ダウンロード」フォルダから保存したMP3を確認できます。ブラウザだけで任意の内部フォルダを直接指定できるとは限りません。</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const api=()=>$('api').value.trim().replace(/\/+$/,'');
+const headers=()=>({'Content-Type':'application/json','X-API-Token':$('token').value.trim()});
+const log=s=>{$('log').textContent += '\n'+s;$('log').scrollTop=$('log').scrollHeight};
+async function request(path,opts={}){
+  if(!api()||!$('token').value.trim()) throw new Error('PCアドレスとAPIトークンを入力してください。');
+  const r=await fetch(api()+path,{...opts,headers:{...headers(),...(opts.headers||{})}});
+  const data= r.headers.get('content-type')?.includes('application/json') ? await r.json() : null;
+  if(!r.ok) throw new Error(data?.error||`HTTP ${r.status}`);
+  return {response:r,data};
+}
+$('connect').onclick=async()=>{
+  $('connection').textContent='接続確認中...';
+  try{const {data}=await request('/api/health');if(!data.ok)throw new Error('サーバー応答が不正です');
+    $('connection').textContent=`接続成功 / yt-dlp: ${data.yt_dlp?'OK':'未検出'} / FFmpeg: ${data.ffmpeg?'OK':'未検出'}`;
+    $('connection').className='status good';log('PCバックエンドに接続しました。');
+  }catch(e){$('connection').textContent='接続失敗: '+e.message;$('connection').className='status bad';log('接続エラー: '+e.message);}
+};
+$('form').onsubmit=async e=>{
+  e.preventDefault();
+  if(!$('agree').checked)return;
+  $('start').disabled=true;
+  try{const {data}=await request('/api/start',{method:'POST',body:JSON.stringify({url:$('url').value.trim(),output_dir:$('path').value.trim(),confirmed:true})});
+    $('status').textContent='変換を開始しました';$('download').disabled=true;log('変換を開始しました。保存先: '+data.output_dir);
+  }catch(err){$('status').textContent='開始できません: '+err.message;log('エラー: '+err.message);}
+  finally{$('start').disabled=false;}
+};
+$('refresh').onclick=async()=>{
+  try{const {data}=await request('/api/status');$('status').textContent=data.running?'変換中':data.success===true?'変換完了':data.success===false?'変換失敗':'待機中';
+    if(data.logs?.length){$('log').textContent=data.logs.map(x=>`[${x.time}] ${x.message}`).join('\n');}
+    $('download').disabled=!(data.success===true);
+  }catch(e){log('状況取得エラー: '+e.message);}
+};
+$('download').onclick=async()=>{
+  try{const {response}=await request('/api/download',{headers:{}});
+    const blob=await response.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    const disposition=response.headers.get('Content-Disposition')||'';const m=disposition.match(/filename="?([^";]+)"?/i);
+    a.download=m?decodeURIComponent(m[1]):'audio.mp3';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href);
+    log('ダウンロードを開始しました。');
+  }catch(e){log('ダウンロードエラー: '+e.message);}
+};
+</script>
+</body></html>
